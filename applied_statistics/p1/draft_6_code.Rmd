@@ -1,0 +1,926 @@
+---
+title: "Code For Project 1 - Applied Statistics "
+output:
+  pdf_document: default
+  html_document: default
+  fig_width: 6 
+  fig_height: 4 
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+Created by: Nachi Lieder 314399114
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# import libraries
+library(rmarkdown)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(pivottabler)
+library(scales)
+library(gtsummary)
+library(ggpubr)
+library(ggfortify)
+library(cluster)
+library(MASS)
+library(lmtest)
+library(fBasics)
+library(rcompanion)
+library(gridExtra)
+library(cowplot)
+library(kableExtra)
+```
+
+# Introduction
+
+This is a report which its main purpose is to examine the variables affecting the BMI of the respondents.
+We will go through several stages in this report
+
+* Data formatting - appending the data into one set that is manageable.
+* Feature Exploration
+* Dealing With Missing Data 
+* Response Variable Exploration
+* Univariate regressions - initial screening
+* Multivariate regressions - in depth screening & attempt to describe the BMI target using the given parameters.
+
+We will explore the data , attempt to understand the behavior of different predictors, and try to use them to explain the behavior of the BMI target. We will be using univariate regressions to understand how each individual predictor behaves , whether it has a potential to contribute in the analysis ,and filter otherwise.
+
+Later we will perform a Stepwise AIC to filter the recommended features that will aid us in the prediction. To enhance this we will add to this analysis the interactions between the different features and re-assess the process.
+We will find that this is proven to be helpful and indeed will create a good picture to the BMI target and its prediction , as well as the characterization of the Y variable.
+
+In addition , I will supply some added depth to enrich the analysis by attempting to cluster and group the observants using the input features , and test whether its definable and applicable to characterize the BMI per group using the other features. (more on this will follow in the report.)
+
+It should be noted that in this analysis I used the initial set of features , and tested of scope (within the code) the potential addition of the remaining feautres .
+I have found these features to be fruitful for our analysis and would recomend attempting to add tem in the next phase( spcifically the interactions between the survey data and the demographic data)
+
+# Part 1
+
+In this part I recieve as an input the 4 datsets , merge them , and combine 1 whole dataset.
+You can see in the result the dimensions of the resulted dataframe which we will explore.
+I merged each genders two datasets together (the demographic data and survey data) and appended it together.
+The final result here is a single dataframe with the dimension of 4036 x 57.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# setwd("School/courses/applied_stats/p1")
+
+#read csvs
+main_m <- read.csv(file = 'main_m.csv')
+main_f <- read.csv(file = 'main_f.csv')
+scale_m <- read.csv(file = 'scale_m.csv')
+scale_f <- read.csv(file = 'scale_f.csv')
+
+# convert column names to readable format
+colnames(main_m)[1]<- "hhid"
+colnames(main_f)[1]<- "hhid"
+colnames(scale_m)[1]<- "hhid"
+colnames(scale_f)[1]<- "hhid"
+
+# join the data of the males
+m_data = inner_join(main_m, scale_m, by = "hhid", copy = FALSE, suffix = c(".x", ".y"))
+# join the data of the females
+f_data = inner_join(main_f, scale_f, by = "hhid", copy = FALSE, suffix = c(".x", ".y"))           
+
+#cat("Dimension for Male DF: ", dim(m_data))
+#cat("Dimension for Female DF: ", dim(f_data))
+
+# append the male and female datasts together.
+df <- rbind(m_data, f_data)
+# cat("Dimension for General DF: ", dim(df))
+```
+# Part 2 - Exploration
+
+In this part I will perform an initial exploration on the datasets features (predictors) , and attempt to understand the charecteristics of the predictors.
+Lets start off with looking at the key features:
+
+1. Region 
+2. Urb 
+3. Income 
+4. Age 
+5. Gender 
+6. Grade 
+7. Exercise 
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = FALSE}
+
+# split all the predictors into groups , having categorical data - convert them into factors , 
+# binary - into factors as well
+# numeric datasets will currently stay the same
+
+
+cat_data <- factor(c('region','urb','race','origin','povcat','sex.x','emp_status','salt_typ','vt_freq','health','exercise','smk_100','smk_now'))
+cols = c('region','urb','race','origin','povcat','sex.x','emp_status','salt_typ','vt_freq','health','exercise','smk_100','smk_now')
+df[cols] <- lapply(df[cols], factor)  ## as.factor() could also be used
+
+bool_cat <- factor(c('plan_yn','shop_yn','wic_yn','dt01','dt02','dt03','dt06','dt07'
+                     ,'doctor1','doctor2','doctor3','doctor4','doctor5','doctor6','doctor7'))
+cols = c('plan_yn','shop_yn','wic_yn','dt01','dt02','dt03','dt06','dt07'
+         ,'doctor1','doctor2','doctor3','doctor4','doctor5','doctor6','doctor7')
+df[cols] <- lapply(df[cols], factor)  ## as.factor() could also be used
+
+
+
+numeric_cat <- factor(c('hhsize','income','pctpov','fs_rcv12','age','grade','d1_tv','bmi_sp'))
+
+not_sure <- factor(c('salt_frq'))
+
+scale_vars <- factor(c('kq2_b','kq2_c','kq2_d','kq2_e','kq2_f','kq2_g',   'kq7','kq33_a','kq33_b','kq34','kq37','kq38','kq39','kq40','kq41','kq42'))           
+
+#count unique values per field
+df %>% summarise_all(n_distinct)
+```
+
+Lets observe the Region feature:
+We can see that overall  there is a slight advantage to observations of patients coming from the South.
+
+Next, lets observe the Urb feature:
+Here what we are observing is a slight advantage in the count for the Suburban originated patients.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+df$region = factor(df$region)
+# histogram of region
+p1 <- ggplot(df, aes(x=factor(region))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p1 <- p1 + scale_x_discrete(labels=c("Northeast","Midwest","South","West")) + 
+  ggtitle('Region Variable Distribution') # for the main title
+
+df$urb = factor(df$urb)
+# hsitogram of urb
+p2 <- ggplot(df, aes(x=factor(urb))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p2 <- p2 + scale_x_discrete(labels=c("Central","Suburban","Non Metroolitan")) + 
+  ggtitle('Urb Variable Distribution') # for the main title
+
+plot_grid(p1, p2)
+
+```
+
+
+Next , lets observe the income variable. (red line - Median , Green line - mean)
+We can see that here there is a long right tail and what seems to be abnormal value around 100000.
+Due to the scaling this right tail spike can argueably make sense , therefor I have decided to leave it in the anlysis and not treat it as an outlier.
+
+
+Lets review the next parameter - Age:
+Here the distribution surrounds the median and mean which is around 50.
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# histogram of income, adding two lines to indicate the median and mean.
+lines <- data.frame(vlines = c(median(df$income), mean(df$income)), labels = c("median", "mean"), stringsAsFactors = FALSE)
+p1 <- ggplot(df, aes(x=income)) + geom_histogram(color="black", fill="lightblue", linetype="dashed")+
+geom_vline(data = lines, aes(xintercept = vlines),col=c('red','green')) +
+  geom_text(data = lines, aes(x = vlines, y = 0, label = labels)) + 
+  ggtitle('Income Variable Distribution') # for the main title
+
+# histogram of age, adding two lines to indicate the median and mean.
+lines <- data.frame(vlines = c(median(df$age), mean(df$age)), labels = c("median", "mean"), stringsAsFactors = FALSE)
+p2 <- ggplot(df, aes(x=age)) + geom_histogram(color="black", fill="lightblue", linetype="dashed")+
+geom_vline(data = lines, aes(xintercept = vlines),col=c('red','green')) +
+  geom_text(data = lines, aes(x = vlines, y = 0, label = labels)) + 
+  ggtitle('Age Variable Distribution') # for the main title
+
+plot_grid(p1, p2)
+```
+
+
+Lets observe the Gender distribution, where we can see an even distribution.
+
+Lets look at the race feature:
+Here we can see an unbalanced set where there is an oversample of patients categorized under White.
+We will explore later on whether this feature can assist us in describing our target (BMI).
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,}
+# histogram of the gender parameter
+df$sex.x = factor(df$sex.x)
+p1 <- ggplot(df, aes(x=factor(sex.x))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p1 <- p1 + scale_x_discrete(labels=c("Male","Female")) + 
+  ggtitle('Gender Variable Distribution') # for the main title
+
+# histogram of the race parameter
+df$race = factor(df$race)
+p2 <- ggplot(df, aes(x=factor(race))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p2 <- p2 + scale_x_discrete(labels=c("White","Black","Asian/Pacific","American Indian","Other")) + 
+  ggtitle('Race Variable Distribution') # for the main title
+
+plot_grid(p1, p2)
+```
+
+Lets view the Grade feature:
+Here we are able to catch the outliers where their grade is above 20.
+We will treat these outliers in the following parts.
+In addition we can see that as expected , the median and mean are near 12. which intuitively makes sense since this represents people who finished high school.
+
+Lets explore the "Exercise"  variable:
+here too we can see some NaN obsevations that will be treated in the following parts of the report.
+In terms of equally distributed data , the data here is not balanced.
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# histogram of the grade parameter , added two lines to indicate the mean and median
+lines <- data.frame(vlines = c(median(df$grade), mean(df$grade)), labels = c("median", "mean"), stringsAsFactors = FALSE)
+p1 <- ggplot(df, aes(x=grade)) + geom_histogram(color="black", fill="lightblue", linetype="dashed")+
+geom_vline(data = lines, aes(xintercept = vlines),col=c('red','green')) +
+  geom_text(data = lines, aes(x = vlines, y = 0, label = labels)) + 
+  ggtitle('Grade Variable Distribution') # for the main title
+
+# histogram of the exercise parameter
+df$exercise = factor(df$exercise)
+p2 <- ggplot(df, aes(x=factor(exercise))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p2 <- p2 + scale_x_discrete(labels=c("Daily","5-6","2-4","Once_a_week","1-3_times_a_week","Rarely/Never")) + 
+  ggtitle('Exercise Variable Distribution') # for the main title
+
+plot_grid(p1, p2)
+
+```
+
+
+
+Lets view the kq7 feature:
+Here we can see some null or insignificant values which will be treated later on.
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# histogram of the kq7 parameter
+df$kq7 = factor(df$kq7)
+p <- ggplot(df, aes(x=factor(kq7))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p + scale_x_discrete(labels=c("Overweight","Underweight","About Right","Dont Know","Not Ascertained")) +   ggtitle('KQ7 Variable Distribution') # for the main title
+
+```
+
+Lets view the binary questions known as dt01,02,03,06,07
+In the following diagram we have the frequency matrix per question x category answer.
+These too are not balanced and mostly are answered with a one-sided answer, we will try to take this under consideration in the following steps.
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# frequency matrix - how many answered yes and no , per question.
+
+summary(df %>% dplyr::select('dt01','dt02','dt03','dt06','dt07')) %>% kbl(caption = "Frequency Matrix - Doctor Questions") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+```
+
+Lets look at the Employee Status feature.
+There are some values to be treated , and it seems that the majority comes from two classes  of the four.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# histogram of emp status
+df$emp_status = factor(df$emp_status)
+p <- ggplot(df, aes(x=factor(emp_status))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p + scale_x_discrete(labels=c("Employed -full time","Employed - part time","Employed, not at work last week",
+                              "employed")) +   ggtitle('Employee Status Variable Distribution') # for the main title
+
+
+```
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# selecting data split by the data type (for future convenience)
+df_cat_data    <- df %>% dplyr::select(cat_data)
+df_bool_cat    <- df %>% dplyr::select(bool_cat)
+df_numeric_cat <- df %>% dplyr::select(numeric_cat)
+df_not_sure    <- df %>% dplyr::select(not_sure)
+```
+
+Lets explore some additional characterisitcs and relationships that may trigger some additional analysis.
+
+In this following plot we describe the distribution of gender & Region
+It seems that the porportions of the gender are equal across all regions .
+
+Next lets view the split between the gender and the Urb feature.
+Here too there seems to be an equal split.
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE, fig.height = 3, fig.width = 5, fig.align = "center"}
+# relationship between sex and region
+counts <- table(df$sex.x, df$region)
+barplot(counts, main="Distribution by Gender and Region",
+        xlab="Region", col=c("darkblue","red"),
+        legend = c("Male", "Female"),
+        #args.legend = list(x = "topright", bty = "n", inset=c(-0.5, 0)),
+        names.arg=c("Northeast", "Midwest", "South","West"))
+
+
+# relationship in a histogram between gender and urb
+counts <- table(df$sex.x, df$urb)
+barplot(counts, main="Gender Distribution by Urb ",
+        xlab="Gender", col=c("darkblue","red"),
+        legend = c("Male", "Female"),
+        #args.legend = list(x = "topright", bty = "n", inset=c(-0.5, 0)),
+        names.arg=c("Central", "Suburban", "NonMetropolan"))
+
+# plot_grid(p1, p2)
+```
+
+
+Now lets observe the split between Urb and Region.
+This is to understand the different distributions between inner classes.
+In this example we can see that the Northeast under the Non Metropolitan has a lower frequency , than the other two Urb sections, and is porportionally less.
+
+
+In this plot following the former one  we observe the relationship and linear trend between the Age and the Income.
+The scatter is pretty well spread , though there is a slight negative trend/correlation overall between the two. 
+This might be due to the fact that the elderly dont work and possibly have a lower income.(Thoughts to consider)
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# bar plot of urb split by region
+counts <- table(df$region, df$urb)
+p1 <- barplot(counts, main="Region Distribution by Urb",
+        xlab="Region", col=c("darkblue","red",'green','yellow'),
+        legend = c("Northeast", "Midwest", "South","West"),
+        names.arg=c("Central", "Suburban", "NonMetropolan"))
+
+attach(df)
+p2 <- plot(age, income, main="Age ~ Income",
+     xlab="Age ", ylab="Income", pch=1,
+     col=rgb(0,100,0,50,maxColorValue=255))
+p2 <- p2 +  abline(lm(income~age), col="red") # regression line (y~x)
+
+# plot_grid(p1, p2)
+```
+
+
+# Part 3 - Missing and Problematic Data
+Given the insights from the prior section , we decide now what data to be changed to NA and follow by removing for regressional tests etc. 
+In this part we deal with NaNs for exercise.
+
+Deal with NaNs and problematic answers that are uninformative for the kq7 variable.
+
+We deal with grades that are above 18 which will be considered outliers.
+
+We deal with Null values for the 5 questions from the doctors.
+
+We deal with Null and missing values for the employee status.
+
+In total we remove about 100 observations from the initial dataset, given that this is a very small amount , we can afford to give up these observations and continue the analysis without them.
+
+We can see that the dimension after the data cleaning is slightly reduced to 3700 x 57
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+ # remove nans from exercise
+index <- df$exercise == '9'
+df = df[!index,]
+
+# remove nans , and uninformative data from kq7
+index <- df$kq7 %in%  c("4","5","8","9")
+df = df[!index,]
+index <- is.na(df$kq7)
+df = df[!index,]
+
+# removed obs that are over the grade 18
+index <- df$grade > 18
+df = df[!index,]
+
+# remove nans from doctor questions
+primes_list <- list('dt01','dt02','dt03','dt06','dt07')
+for (col in primes_list) {
+  df[,col] <- as.factor(as.character(df[,col]))
+  index <- c("5") ==  df[col] 
+  df = df[!index,]
+  index <- c("9") ==  df[col] 
+  df = df[!index,]
+}
+
+# removed nans from emp status
+df[,'emp_status'] <- as.factor(as.character(df[,'emp_status']))
+index <-   c("9") ==  df$emp_status 
+df = df[!index,]
+
+# remove for scale vars the not ascertained observations
+for (col in scale_vars) {
+  df[,col] <- as.factor(as.character(df[,col]))
+  index <- c("9") ==  df[col] 
+  df = df[!index,]
+}
+
+
+# print('Dimension after data manipulattion: ') 
+# dim(df)
+```
+
+# Part 4 - The Response Variable - Need For Transformation?
+Lets look at the target variable. In this step , we will observe the BMI Measurement and evaluate the metrics , understand whether we will need to transform the value for further perdictive analysis and deal with outlier data.
+
+First off we know that values of BMI *tend* to range between 0-30 , where over 30 is considered obese.
+We can see here that there are certain outliers , where an entire quartile is above 30 ( and the top 2 percentile are above 75).
+We will consider the top two percentile as outliers and deal with them in the following sections.
+
+In addition ,from the following figure, we are dealing with data that has a gaussian-like curve , though not specifically a normal distribution. We would like to verify that it is actually normal as a pre condition for future analysis such as log likelihood etc.
+For this we performed the following QQ plot where we can see the huge right tail of our outliers affecting this analysis.
+For the sake of the checkup , I removed these outliers and re-checked the QQ plot finding a somewhat smoother plot , though not a normal disrtibution.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 4, fig.align = "center"}
+
+# quantiles of BMI
+# print(summary(df$bmi_sp))
+quantile(df$bmi_sp, probs = c(0, 0.25, 0.5, 0.75, 0.9,0.98,1), na.rm = TRUE) %>% kbl(caption = "Quantile Matrix - BMI results") %>%
+  kable_classic(full_width = F, html_font = "Cambria")
+
+# distribution plot of BMI
+# distribution of BMI
+p1 <- ggplot(df, aes(x=factor(bmi_sp))) + stat_count(color="black", fill="lightblue", linetype="dashed")
+p1<- p1+geom_density(alpha = .2, fill = "#FF6666") +   ggtitle('BMI Variable Distribution') # for the main title
+
+
+
+# density plot 
+y <- df$bmi_sp
+p2 <-ggdensity(y, 
+          main = "Density : BMI",
+          xlab = "BMI Value")
+
+plot_grid(p1, p2)
+# QQ plot of BMI
+ggplot(df, aes(sample = bmi_sp)) +
+   stat_qq()+   ggtitle('QQ Plot of BMI variable pre-transformation')
+
+
+
+
+# filter tail and look again
+# df$filtered_bmi <-  df$bmi_sp[df$bmi_sp < 70]
+#summary(filtered_bmi)
+#qqnorm(filtered_bmi, pch = 1, frame = FALSE, main ='QQ Plot of BMI variable prior to outlier removal')
+#qqline(filtered_bmi, col = "steelblue", lwd = 2)
+
+# filter tail 
+df <- df[df$bmi_sp < 70,]
+
+```
+
+Given the results we saw regarding the BMI distribution , we will perform a Box-Cox tranformation , and re-evaluate the distribution.
+In the following plot we perform the box-cox , and plot the updated histogram.
+We can see now that the distribution plot look a lot better and are able to take under normality assumptions.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 5, fig.align = "center"}
+
+## look at the box cox for the BMI ( vs the intercept) 
+Box <- boxcox(df$bmi_sp ~ 1)
+Cox = data.frame(Box$x, Box$y)            # Create a data frame with the results
+Cox2 = Cox[with(Cox, order(-Cox$Box.y)),] # Order the new data frame by decreasing y
+# Cox2[1,]  
+lambda = Cox2[1, "Box.x"]                 # Extract that lambda
+T_box = (df$bmi_sp ^ lambda - 1)/lambda   # Transform the original data
+df$T_box = T_box
+plotNormalHistogram(T_box,main = "Normailty Histogram - Transfored BMI Variable")
+
+# qq plot of the transformed data
+ggplot(df, aes(sample = T_box)) +
+   stat_qq()+   ggtitle('QQ Plot of BMI variable post-transformation')
+
+
+``` 
+
+# Part 5 - Relation of BMI with other values
+Lets review the relationship of the BMI with other features , identify some correlations and potential descriptive analysis.
+
+Looking at the BMI grouped by regions , we can see that Northeast is with the smallest range , and least amount of outliers. We can also see that the medians are similar to all groups.
+
+While plotting the box plots of the BMI , vs the Race feature ,we see different ranges through the grouop , having "white" as expected with the largest range . This is expected since it holds the majority of the observations. What is interesting is that most (if not all) the outliers that are potential from this set , are under the "white" category.
+
+
+Looking at the relationship between BMI and Urb , we find equal medians with Class 2 (Suburban) containing some additional long tails  , though we are still under standard acceptable ranges , so this is considered fine.
+
+Next we can see the box plots per gender. The body of Group 2 is larger under almost equaly sized groups , which is interesting to understand full relation and correlation between the two .
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 4, fig.align = "center"}
+y <- df$T_box
+# boxplot per region
+# deosnt seem to have any differences, ADDED: after removing outlier Y, seems like cat 2 ranges a bit more, cat 4 probably has lower variance.
+p1 <- ggplot(df, aes(x=region, y=T_box)) + 
+  geom_boxplot()+ggtitle('BP Region~BMI') 
+
+# boxplot per race
+# 2 and 4 potentially have higher BMI by definition, 1 has long tail (WHITE)
+
+p2 <- ggplot(df, aes(x=race, y=T_box)) + 
+  geom_boxplot()+ggtitle('BP Race~BMI') 
+
+
+# boxplot per urb
+# no change, ADDED: 1 seems a little more subtle
+p3 <- ggplot(df, aes(x=urb, y=T_box)) + 
+  geom_boxplot()+ggtitle('BP Urb~BMI') 
+
+# boxplot per sex
+# larger variance with 2
+p4 <- ggplot(df, aes(x=factor(sex.x), y=T_box)) + 
+  geom_boxplot()+ggtitle('BP Gender~BMI')
+
+
+plot_grid(p1,p2)
+plot_grid(p3,p4)
+
+```
+
+
+Next we will look at the negative correlation between the BMI transformed and the grade.
+The ranges are much larger for grades 12 + , this makes sense , since the age range is probably larger and more diverse , vs lower grades which probably contains a more unified set of patients.
+What is interesting here is using a polinomial regression line we can see a small peak around 11-12 , and minimums around 3-6 and around 15.
+
+
+In the following figure we demonstrate a similar analysis to the previous though with age vs BMI .
+
+Here we can see that the highest BMI range around the ages of 50-70. Leveraging this , we can consider using a Transformation of this variable for the prediction of the BMI.
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 4, fig.align = "center"}
+# scatter plot vs grade
+#pretty straight regression line , ADDED: declining a bit as the grade progresses and peaks around 12
+
+
+p1 <- plot(df$grade,df$T_box,col=rgb(0.4,0.4,0.8,0.6),pch=16 , cex=1.3, main='Scatter plot Grade ~ BMI Transformed') 
+model <- lm(df$T_box ~ df$grade + I(df$grade^2) + I(df$grade^3)+ I(df$grade^4))
+myPredict <- predict( model ) 
+ix <- sort(df$grade,index.return=T)$ix
+p1 + lines(df$grade[ix], myPredict[ix], col=2, lwd=2 )
+
+# scatter plot vs age
+#pretty straight regression line
+# this should be similar to grade ...need to verify why not.
+p2 <- plot(df$age,df$T_box,col=rgb(0.4,0.4,0.8,0.6),pch=16 , cex=1.3 , main ='Scatter Plot BMI_T ~ Age + Age^2' ) 
+model <- lm(df$T_box ~ df$age + I(df$age^2) )
+myPredict <- predict( model ) 
+ix <- sort(df$age,index.return=T)$ix
+p2 + lines(df$age[ix], myPredict[ix], col=2, lwd=2 )
+
+
+# plot_grid(p1,p2)
+
+# transform the age to sqaure it
+df$age_t = df$age^2
+```
+
+
+
+Here we can see a scatter plot of the relationship between the income and the income.
+The trend is pretty linear and subtle. We will suspect that there is not significant relationship between the two vatiables and will verify this is the following steps.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 4, fig.align = "center"}
+# scatter plot vs income
+#BMI with slight decreasing relationship
+ggplot(df, aes(x=income, y=T_box)) + 
+  geom_point(shape=18, color="blue") + 
+  geom_smooth(method=lm,  linetype="dashed",
+              color="darkred", fill="blue")+ggtitle('Scatter Income ~ BMI Transformed') 
+
+```
+
+Here there is a split according to the categorical sets of the Excercise variable.
+The medians are pretty equal , per all sets.
+Though by splitting by the kq07 , into its 3 categories , we can see a variance within the groups.
+The right tail observations belong to group 1 which is interesting since it characterizes this group with more eratic answers.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# box plots of exercise and kq7 vs transformed bmi
+p1 <- ggplot(df, aes(x=exercise, y=T_box)) + 
+  geom_boxplot()+ggtitle('Box Plot exercise ~ BMI' ) 
+
+p2 <- ggplot(df, aes(x=factor(kq7), y=T_box)) + 
+  geom_boxplot()+ggtitle('Box Plot KQ7 ~ BMI' )
+
+plot_grid(p1,p2)
+```
+
+
+
+
+# Part 6 - Univariate Regressions
+In this phase we will choose the set of variables ('region','urb','income','age','sex.x','race','grade','exercise','kq7','dt01',
+'dt02','dt03','dt06','dt07','emp_status') in addition to the scaled variables of the surveys which were too cleaned prior to the analysis.
+and run univariate regressions of BMI ~ X , where X will be a univariate variable from the former list.
+Given the  results , we can evaluate which of the following features are not worth consideration in the building of the model for the BMI.
+I decided to be relaxed with this constraint and set the threshold to 0.05 , and let the feature 'urb' enter the following steps.
+Please note that the results are in the appendix for these tests.
+
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+#selected_cols = c('region','urb','income','age','sex.x','race','grade','exercise','kq7','dt01',
+#                  'dt02','dt03','dt06','dt07','emp_status',
+#                  'kq2_b'  ,'kq2_c' , 'kq2_d' , 'kq2_e'  ,'kq2_f'  ,'kq2_g' ,   'kq33_a' ,
+#                  'kq33_b' ,'kq34' ,  'kq37' ,  'kq38' ,  'kq39',   'kq40'   ,'kq41' ,  'kq42')
+
+selected_cols = c('region','urb','income','age','sex.x','race','grade','exercise','kq7','dt01',
+                  'dt02','dt03','dt06','dt07','emp_status')
+
+selected_df <- df %>% dplyr::select(selected_cols)
+
+```
+In the following table we can see the results of the univariate analysis. I decided to leave the following features due to their significant p value which indicates their potential contribution to the analysis:
+'region','urb','income','age','sex.x','race','grade','exercise','kq7','dt01',
+                  'dt02','dt03','dt06','dt07','emp_status'
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+##########################################
+# Regrress Y vs each column seperately
+###########################################
+
+tbl_uv_ex1 <-
+  tbl_uvregression(
+    selected_df,
+    method = glm,
+    y = T_box,
+    #show_single_row = selected_cols,
+    # exponentiate = TRUE,
+    pvalue_fun = function(x) style_pvalue(x, digits = 2)
+    
+  ) %>%
+  add_global_p()
+
+#tbl_uv_ex1 %>% kbl(caption = "Univariate Results TransBMI ~ X") %>%
+#  kable_classic(full_width = F, html_font = "Cambria")
+
+tbl_uv_ex1
+
+```
+
+
+
+
+# Part 7 - Multiple Regression
+## Variable Screening
+We screened the datasets features using the former runs results , and the pvalue outcomes.
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+# Choose columns to filter after univariate runs
+columns_filtered_after_uvariate_regs = c('region','income','age','sex.x','race','grade','exercise','dt01','dt02','dt03','dt07',
+                                         'emp_status')
+
+#columns_filtered_after_uvariate_regs =
+#c('region','income','age','sex.x','race','grade','exercise','kq7','dt01',
+#                  'dt02','dt03','dt07','emp_status',
+#                  'kq2_c' , 'kq2_d' , 'kq2_e'    ,'kq2_g' ,   'kq33_a' ,
+#                  'kq34' ,  'kq37' ,  'kq38'        ,  'kq42')
+uvariate_filtered_df <- selected_df %>% dplyr::select(columns_filtered_after_uvariate_regs)
+uvariate_filtered_df$T_box = T_box
+uvariate_filtered_df<- uvariate_filtered_df %>% drop_na()
+```
+
+
+## STEP AIC
+Once we have the fileterd set , we can run the Step AIC model , (using both sides) to filter out more features using a more sophisticated method.
+AIC is found to be pretty useful in this situation, and since the target variable is converted to a normal distribution , we are able to apply a log likelihood model.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = FALSE}
+# without interactions
+full.model <- lm(uvariate_filtered_df$T_box ~., data = uvariate_filtered_df  )
+
+# Stepwise regression model - both ways
+step.model <- stepAIC(full.model, direction = "both", 
+                      trace = TRUE)
+
+
+```
+
+We can see that the final run gives us an adj. R squared of 0.07 , F statistic of a significance.
+Although there are some predictors here which come out to be not as significant in their contribution , I decided to leave them in .
+
+Another thought to be considered is the fact that there are some features that one sub group within the categorical feature has a significant P val , and other members of the domain dont. This could be due to a redundant split of the category, which could result in us merging some of the groups back together.
+
+An example for this could be seen under the category Race , where some sub groups have a quite high p value and low |t-stat| , and could possibly be merged into another one. (Possibly expand Other to be all but White)
+
+Some additional insights that are worth noting here are that females have a significant negative relation with BMI , derived from the T stat.
+Grade does as well , giving an indication that potentially , the lower the grade the higher the BMI , and vice verse.
+
+Generally speaking , this model presents several siginificant negative correlations with some of the predictors. ( where it it noticable that the intercept is a positive number , so there is a compensation represented there against all the negative coeff predictors.)
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+#library(huxtable)
+#summary(step.model) %>% kbl(caption = "Step AIC Summary Results") %>%
+#  kable_classic(full_width = F, html_font = "Cambria")
+#huxreg(step.model)
+summary(step.model)
+
+```
+
+Lets review the residuals and break them down to understand their behavior.
+In the following plots we can see the histogram of the residuals and the scatter plot of the fitted vs the residuals.
+We can see that the scatter surrounds 0 which is encouraging.
+The QQ plot confirms the normality of the residuals. 
+We can also see that looking at the Durbin Watson metric, we can see that the score is ~2.05 which given that it is close to 2 , indicates that there is close to no auto correlation within the residuals  - meanining that the residuals are independendant.  
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 3, fig.align = "center"}
+# assign residuals and fitted points to variables
+model_res = resid(step.model)
+fitted <- fitted(step.model)
+
+# summary(model_res)
+#%>% kbl(caption = "Residual Summary") %>%
+#  kable_classic(full_width = F, html_font = "Cambria")
+
+# first view loks fine in terms of normality
+hist(model_res, main="Histogram of Residuals",
+     ylab="Residuals")
+
+# plot residuals vs fitted set
+plot(fitted, model_res, ylab="Residuals", xlab="BMI Score Fitted", main="BMI Prediction (residuals)") 
+  
+
+#Q-Q Plot of residuals
+qqnorm(model_res)
+qqline(model_res)
+```
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = FALSE}
+# perform dwtest
+dwtest(step.model) #Test for independence of residuals
+
+```
+
+
+# Influence Plot
+Here we will test out the influence of the different predictors  , extarcting the Hat values , and the Cooks distance.
+In the following plot we can see that there are two clusters whcih are differed by the Hat values (above and below 0.04). 
+
+There are also two observations with very high hat values , but significantly small cooks distance sizes. (far right of the graph).since the Cooks distance is small , this is not too alarming to our analysis.
+
+Value 3885 has a pretty high Cooks distance and Hat value. This could be considered the most influencial observant.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+library(car)
+# perform cooks distance and Hat values vs studentized residuals , for influence plot.
+p1 <- influencePlot(step.model, id.method="identify", main="Influence Plot", sub="Circle size is proportial to Cook's Distance" )
+
+
+```
+
+# Interactions Effects
+
+Lets consider using interactions between variables.
+For this , we can leverage the previos architechture of the AIC model , just run it including the interactions of the different predictors.
+We will test this using the forwards direction.
+The results were quite encouraging. While adding the additional interactions we manage to filter out most of them using the AIC  , and remain with multiple interactions (and single variates):
+please see appendix for full report.
+
+To summarize this test , we will address some of the features that were included in the model:
+
+Age is considered a significant predictor , having a strong negative T stat , indicating that the younger the age , the higher potentially the BMI.
+
+Age along with Low calorie diets are negativly correlated with BMI, with a T stat ~-3.
+
+Race interacted with grade have a strong negative correlation , haveing the effect that Black people with a lower age have higher BMIs and vice versa.
+It is interesting that for some groups of race this is significant but for others it isnt neccesarrily.
+
+There are several more insights that can be derived which can be elaborted in the future.
+
+Our R squared increases to 0.11 , which means that there is a significant amount of variance explained from the interactions.
+Our F statistic is still significant though not as strong as expected , and P value stays siginficant.
+Using these results I decided to continue with the added interactions (post feature filtering).
+
+
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = FALSE}
+
+
+# AIC with interactions
+full.model <- lm(uvariate_filtered_df$T_box ~ .^2,   data = uvariate_filtered_df  )
+
+
+# Stepwise regression model
+step.model <- stepAIC(full.model, direction = "forward", 
+                      trace = TRUE,
+                      steps = 10)
+summary(step.model)
+
+```
+
+For the sake of the inspection , I plotted out the fitted preditcions vs the actual ones. 
+The intuition here was to validate whether a linear model fits the case we are trying to solve, or whether we might need to address this with a polinomial curve.
+Given the plot , we can assume that a linear model generalizes the problem well enough.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 3, fig.align = "center"}
+# print summary of run
+#summary(step.model)
+#%>% kbl(caption = "Residual Summary") %>%
+#  kable_classic(full_width = F, html_font = "Cambria")
+
+model_res = resid(step.model)
+fitted <- fitted(step.model)
+# plot the fitted vs actual with a guided regression line for model performance
+plot(fitted,uvariate_filtered_df$T_box,col=rgb(0.4,0.4,0.8,0.6),pch=16 , cex=1.3 , main = "BMI ~ Fitted BMI scatter plot") 
+model <- lm(uvariate_filtered_df$T_box ~ fitted + I(fitted^2) )
+myPredict <- predict( model ) 
+ix <- sort(fitted,index.return=T)$ix
+lines(fitted[ix], myPredict[ix], col=2, lwd=2 )
+
+
+```
+
+And by re-iterating the residuals evaluation again , we get:
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 3, fig.align = "center"}
+model_res = resid(step.model)
+fitted <- fitted(step.model)
+# summary(model_res)
+# first view loks fine in terms of normality
+hist(model_res, main="Histogram of Residuals",
+     ylab="Residuals")
+
+
+plot(fitted, model_res, ylab="Residuals", xlab="BMI Score Fitted", main="BMI Prediction (Residuals)") 
+  
+
+#Q-Q Plot of residuals
+qqnorm(model_res)
+qqline(model_res)
+
+```
+
+
+# Additional Analysis
+
+This part will conduct some additional analysis on the dataset to characterize the data just a bit more and attempt to aid us with fully understanding the behavior and caveats of the dataset.
+
+
+In the first part I performed a clustering method of K means to try and classify the observants within predefined clusters.
+We use the elbow method to determine that there should be 4 clusters.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 3, fig.align = "center"}
+
+# scale numeric data for K means
+s_cols = c('region','urb','income','age','sex.x','race','grade','exercise','kq7','dt01',
+                  'dt02','dt03','dt06','dt07','emp_status')
+s_df <- df %>% dplyr::select(s_cols)
+s_df_scaled <- s_df
+s_df_scaled[c('age','income','grade')] <- lapply(s_df_scaled[c('age','income')], function(x) c(scale(x)))
+
+s_df_scaled$T_box = T_box
+s_df_scaled <- s_df_scaled %>% drop_na()
+
+# plot the kmeans score per different sets of clusters to attempt to charecterize set, 
+# use elbow method to evaluate  optimal number of clusters
+rng<-2:15 #K from 2 to 20
+tries <-100 #Run the K Means algorithm 100 times
+avg.totw.ss <-integer(length(rng)) #Set up an empty vector to hold all of points
+for(v in rng){ # For each value of the range variable
+  v.totw.ss <-integer(tries) 
+  for(i in 1:tries){
+    k.temp <-kmeans(s_df_scaled,centers=v) #Run kmeans
+    v.totw.ss[i] <-k.temp$tot.withinss#Store the total withinss
+  }
+  avg.totw.ss[v-1] <-mean(v.totw.ss) #Average the 100 total withinss
+}
+plot(rng,avg.totw.ss,type="b", main="Total Within SS by K",
+     ylab="Average Total Within Sum of Squares",
+     xlab="Value of K")
+```
+
+
+Once we have the optimal number of clusters , we can re-run the kmeans on the set, and assign to each observation its label.
+
+The following plot , describes performance of the Kmeans , reducing the dimension to 2 while still holding the optimal amount of variance using PCA.
+
+We can see that the clsuters have an interesting fit , and the number of elements in each cluster is pretty significant with 894,  762 , 958, 1071 obs respectfully. 
+
+To conclude this analysis, we assign to each observation its label ,  and group the dataframe by the labels assigned -> and calculate the BMI mean per group.
+
+The motivation here is to see whether the averages are different per group (reminder that BMI was not )
+
+What we can see in the figure below  the plot of the 4 averages of BMI , per group. We can see that visually there is a distinctive measurement per group that we can consider while characterizing the BMI set in the future. 
+
+Another recommendation here would be to categorize the BMI into 4 groups , and maybe analyze accordingly. We might be able to create stroger relationships while perfroming the analysis on discrete groups rather than a continuous variable.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 4, fig.align = "center"}
+# scale numeric data for K means
+#selected_df_scaled <- selected_df
+#selected_df_scaled[c('age','income','grade')] <- lapply(selected_df_scaled[c('age','income')], #function(x) c(scale(x)))
+
+#plot pca after kmeans
+autoplot(clara(s_df_scaled, 4),frame=TRUE, main='Plot of clusters after PCA dimension reduction')
+
+# perform kmeans and assign each observation its label
+k.temp <-kmeans(s_df_scaled,centers=4) #Run kmeans
+s_df_scaled['labels'] <- k.temp$cluster
+s_df_scaled['y'] <- s_df_scaled$T_box
+
+# plot the results 
+plot(s_df_scaled %>% group_by(labels) %>%   summarize(mean_size = mean(y, na.rm = TRUE)),
+     main =" 4 Cluster BMI Means")
+
+```
+
+Another note here that should be taken is the addition of all the rest of the features. I have added these features in the assessment (the survey question features) and they ahve been found to be significant , especially using interactions between them and the demographic data.
+This would conclude a second potential phase to the analysis by adding these features and increasing the R squared to 0.47 (proven in the code).
+
+
+# Conclussion
+
+To conclude this analysis , we can see that the BMI parameter can be explained and described by the current set of features.
+There are several more options to enhance this analysis , such as additional features (new features, or transformations of current ones.)
+We found that there is a clear connection and relationship between the BMI and different elements of the patients such as demographic informtion , different surveys etc.
+
+Another next step that may be interesting to check is testing additional models (consider decision tree based models) and perform a comparison of predictions between the models .
+Compare feature importance ,  and residuals variance.
+
+
+
+# Appendix
+
+Per our univariate regression , the full report is the following:
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE}
+
+#tbl_uv_ex1
+```
+Here we can see the full report of the interaction based AIC.
+
+```{r , echo=FALSE, warning=FALSE,message=FALSE, results = TRUE,fig.height = 3, fig.width = 3, fig.align = "center"}
+# print summary of run
+summary(step.model)
+```

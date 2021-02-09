@@ -1,0 +1,541 @@
+
+---
+output:
+  pdf_document:
+    toc: yes
+pagetitle: HW2
+title: "HW2 - Nachi Lieder 314399114"
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# import libraries
+library(rmarkdown)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(pivottabler)
+library(gtsummary)
+library(ggpubr)
+library(ggfortify)
+library(cluster)
+library(MASS)
+library(lmtest)
+library(fBasics)
+library(rcompanion)
+library(gridExtra)
+library(cowplot)
+library(kableExtra)
+library(haven)
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(lme4)
+library(reshape2)
+library(kableExtra)
+library(pander)
+library(performance)
+```
+
+
+# File reading
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# reading the data and storing in df
+#setwd("School/courses/applied_stats/p2_2")
+
+path = file.path( "ETT_ESM_Study1.sav")
+df = read_sav(path)
+
+# convert time to numeric
+df$TIME_S <- as.numeric(df$TIME_S)
+
+```
+
+Lets look at the following subset:
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+myvars <- c("TIME_S", "DAY", "Subject","future")
+newdata <- df[myvars]
+
+
+```
+
+Lets look at the time . We are talking about time since midnight , having a maximum at 86400 (seconds in a day). 
+As we see in the plot , there arent any non-rational values in the set.
+What we can see are three observations that were taken sometime near (0:00 - 0:30). Since the data is somewhat continuous and there is a cycle that needs to be taken into place (value 1 = 86401 = 0:00:01 AM) - I will convert these values to 86400+X to represent midnight since then they will be scaled the same way as the rest and the partition wont be drastic.
+The next observation occurs around 30000 seconds later => (8:30 AM).
+There are no missing data points , which is encouraging.
+
+As for the Day variable , there too is no missing data , and the range looks fine [1,3]
+We are also talking about almost equal sets, having all above 200, though Day1 might have the most.
+
+Regarding the Subject variable , we are looking at 492 subjects, and I wanted to inspect the average time that each subject has its observations measured. Below is the scatter plot with per subject the average time_S. What is interesting here is that there is a large variation of measurement times. We can see averages per Subject_i ranging from 30000 to 80000. We will take this into mind when analyzing the results of our analysis since this can be taken as a bias for the model.
+
+Also , I verified the diversity of the time per day per subject , in the following plot we can see that the there is no pattern of time of the day relative to the day of the observation and the subject.
+
+To conclude this part of the analysis I validated that per day , the average time is somewhat similar. In the boxplot below we can see that the medians are very close  and we can assume similarity between the distributions of the three classes.
+
+This concludes the exploration analysis per the 4 features
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+par(mfrow=c(1,2))
+
+newdata$idu <- row.names(newdata)
+# if row numbers are integers (most likely!)
+newdata$idu <- as.numeric(row.names(newdata))
+
+# plot scatter of time points
+p1 <-ggplot(newdata, aes(x=idu, y=TIME_S )) + geom_point() +ggtitle('Scatter of TIME_S points') 
+
+
+number_of_missing <- sum(is.na(newdata$TIME_S))
+
+# find all observations that are below 3500 - outliers (3 of them)
+index <- newdata$TIME_S <3500 
+# round them to the next day to get better spread
+newdata[index,]$TIME_S <- newdata[index,]$TIME_S + 86400
+
+#plot number of observations pe day
+p2<-ggplot(newdata, aes(x=DAY)) + geom_histogram() +ggtitle('Histogram of # Obs per Day') 
+
+number_of_unique_subjects <- length(unique(newdata$Subject))
+
+
+grouped_by_subject <- newdata %>%
+  group_by(Subject) %>%
+  summarise_at(vars(TIME_S), funs(mean(., na.rm=TRUE)))
+
+# Plot Subject ~ Time split by Days (colors)
+p3 <- ggplot(newdata, aes(x=Subject, y=TIME_S, color=factor(DAY), shape=factor(DAY))) +
+  geom_point() +ggtitle('Plot Subject ~ Time split by Days (colors) ') 
+
+
+# boxplot of 3 days
+p4<- ggboxplot(
+      data =newdata, x = "DAY", y = "TIME_S",
+      fill = "DAY", palette = "npg", legend = "none",
+      ggtheme = theme_pubr()
+      )+ggtitle('Boxplot of Day ~ Time') 
+
+
+
+grid.arrange(p1, p2,p3,p4,ncol = 2, nrow = 2)
+
+
+```
+
+
+Here we can see the results of the t test that I perfromed between Time and the different DAYs , validating that there isnt a difference between the different days and time's mean. 
+We can see that th P val is high and we can assume similarity between the groups.
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# run anova tests on time~day and future~day
+res.aov_time <- newdata %>% anova_test(TIME_S ~ DAY)
+res.aov_future <- newdata %>% anova_test(future ~ DAY)
+
+#
+
+```
+
+On the other hand , we can see here the test of the Future ~ Day , wehere we can see that it is quite significant the difference between the behavior of the subjects in the days with respect to their Future. The P val is quite low here which confirms that there is a difference that we should consider in the future.
+
+```{r kable}
+#kable(res.aov_future,caption = "T Test future ~ DAY")
+#kable(res.aov_time,caption = "T Test TIME_S ~ DAY")
+
+# plot out the anova tests
+panderOptions("digits", 3)
+pander(res.aov_time,caption = "T Test future ~ DAY")
+pander(res.aov_future,caption = "T Test TIME_S ~ DAY")
+
+
+```
+
+# Logistic Regression Stage 
+
+Lets assess a classic Logistic Regression with the Time as the predictor to preedict the probability of a future thought..
+
+We can see that standalone , the time has a pretty siginificant Z val with -6.3 , and a very low P val.
+
+Below we also have the plot of the curve which is very lean , and from the points witin the scatter you can see that the diferentiation is not very significant. 
+Also , the QQplot of the residuals presents a very non normal distribution of the residuals.
+
+What is interesting here is that while predicting the sample test set  , we get a range of probabilities from [0.21,0.37]. A suggestion would be to enforce the model with some more predictors. There seems to be a bias towards the results , where we would expect a broader spread of results rather than the small range. Below we can observe a histogram of the resulted probabilites. We can see that within the range [0.25,0.35] it is prety well spread, and seems gaussian , but not normal.
+
+We can also see that while splitting the sets to train and test , to evaluate the accuracy , we can see that this specific model is able to acheive an accuracy of 64% . This could give us an indication of the fittness of the model and another benchmark and pivot point for model selections in the future. Although this model was not fine tuned , it is a benchmark that we can pivot off of.
+
+The improvement of the dispersion from the null disperssion is quite small , shifting from 8073 to 8033.This shows that the additional input of our single predictor is not quite good enough. our score is equal to 0.04 .
+
+
+```{r glm, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# standardize the time data
+newdata$TIME_S_standardized <- scale(newdata$TIME_S)
+# factorize the subject data
+newdata$Subject = factor(newdata$Subject)
+
+# fit a Logistic regression on datset
+fit.lr <- glm(future ~TIME_S_standardized, data = newdata, family = binomial)
+pander(summary(fit.lr))
+
+
+#newdat <- data.frame(TIME_S=seq(min(newdata$TIME_S), max(newdata$TIME_S),len=100))
+#newdat$vs = predict(fit, newdata=newdat, type="response")
+#plot(future~TIME_S, data=newdata, col="red4")
+#lines(vs ~ TIME_S, newdat, col="green4", lwd=2)
+```
+
+```{r fig3, fig.width = 5, fig.asp = .62, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+
+# evaluate simple prediction on same set 
+probabilities <- fit.lr %>% predict(newdata, type = "response")
+par( mfrow = c(1,1) )
+#hist(probabilities)
+qplot(probabilities, bins = 50) # `qplot` analog for short
+#df.probs <- as.data.frame(table(probabilities))
+#hist(probabilities)
+#ggplot(df.probs, aes(x=probabilities)) + geom_bar() +ggtitle('Histogram of # of True future #thoughts ') 
+```
+
+```{r glm_continue, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+#mean(probabilities)
+
+# run non standardized glm (for internal comparisons)
+mod.0 <- glm(newdata$future ~newdata$TIME_S, family = binomial)
+with(summary(mod.0), 1 -deviance/ null.deviance)
+
+
+# plot results for glm
+par(mfrow=c(2,2))
+plot(fit.lr)
+```
+
+```{r train_test, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# split to train and test
+train_index <- sample(1:nrow(newdata), 0.8 * nrow(newdata))
+test_index <- setdiff(1:nrow(newdata), train_index)
+
+# Build X_train, y_train, X_test, y_test
+X_train <- newdata[train_index,'TIME_S']
+y_train <- newdata[train_index, "future"]
+
+X_test <- newdata[test_index, 'TIME_S']
+y_test <- newdata[test_index, "future"]
+
+# fit on train set
+fit_train <- glm(y_train$future ~X_train$TIME_S, family = binomial)
+
+# project on test set
+probabilities <- fit_train %>% predict(X_test, type = "response")
+pred_binary <- probabilities>.5 
+# mean(pred_binary == y_test)
+
+```
+
+
+The next step is to try to evaluate the targeted variable using a mixed model with time of day as a fixed effect
+
+When observing the standard error we can see that given the day within the subject ,there is a much lower variance , than just the subject as it is. There is a differnce of 0.08 to 0.53.
+
+In addition , while looking at the fixed effects , we can see that both the regular intercept and also the Time (standardized) have significant estimates.
+So per subject we recieve its own intercept based on the usual intercept + the time standardized which is tailor made per subject. The coefficients are obviously equal to all in both models.
+
+We can see that the AIC in the mixed model evaluation is slightly lower than the linear model above , shifting from 8037 to 7803 , indicating that this model is slightly more predictive and well defined.
+
+The addition of adding the level of the DAY into the mixed model gives only a slight if not any improvement. What is interesting is that adding another model with only the Day as the mixed random variable , we get a higher AIC which indicates that the major factor here is indeed the subject ( which makes sense)
+
+```{r mixed_model, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+# perform mixed model 
+mixed_model <- glmer(
+  future ~ TIME_S_standardized + (1|Subject/DAY), 
+  data = newdata, 
+  family = binomial(link = "logit")
+)
+mixed_model
+```
+
+To compare in depth these two models ( linear model vs the mixed affect model) I performed an anova test which summarizess the comaprison. Here we can see the difference between the AICs , as well as the LogLikelyhood . Also notice the Chi Squared high level , and very low P val which conclude the rejection of the null hypothesis of equally contributed models in terms of the deviance and addition of new features. This concludes that the addtition of the predictor Subject and Day are significantly considered contributers.
+
+In terms of agreement , it seems like the two models somewhat behave the same more or less , with one having a slight improvement.  The difference here would be that for the advanced mixed model , we have a more tailor made model , fitting the intercept to have a more individual set , where each subject and observation would have its own additional contribution to the intercept. By lowering the generalization we are able to receieve slightly better results. 
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# plot anova of mixed vs GLM
+pander(anova(mixed_model, fit),caption='Anova Test - Mixed model vs LR')
+
+```
+
+
+# Question 2
+
+I will retreive the 7 given features ( age , sex , and the big five features) and create an aggregated dataframe representing the aggregation grouped by subjects , and their descriptive analysis.
+
+while plotting out the aggregation count , we can see that different subjects have differnt amount of observations. The smallest set was 1 observation per subject , and largest 18.
+
+Lets try to observe each subjects big five by representing its categories in the form of means per subject.
+The following set of histograms per each category represents the means dsitribution . As you can see there are very different distributions per category.
+
+For an instance , categories A, E are much more gaussian ,while the density of C and O are emphasized on the right, and category N on the left in terms of skeweness.
+
+Since the scale of the big 5 is from 1-7 , we can say that traits O and C (openness to to experiences and conscientiousness) were found to have much higher ranks. These are self imaging traits that are expected to have higher values. Values of agreeableness and Extraversion are with slightly lower means in overall and representing a slighlty more unbiased set of questions. Neuroticism is considered a negative trait in some way, and like the first two , is expectd to have a more biased look at themselves in terms of self image.
+
+--- Let take this behavior under consideration while building our model.
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+cols_big_five <- c('Subject','age','sex','A','C','E','N','O','future')
+big_five <- df[cols_big_five]
+
+big_five$sex <- factor(big_five$sex) 
+
+# group by subject and view mean
+a <- big_five %>% group_by(Subject)%>% summarise(mean=(mean('E')))
+
+# group by subject and view mean
+means <- aggregate(big_five, list(Subject = big_five$Subject), mean)
+# select the relevant columns
+means_sample_Set <- means[c('A','C','E','N','O')]
+# histograms  of means
+means_sample_Set %>% select_if(is.numeric) %>%  gather(cols, value) %>%  ggplot(aes(x = value)) + geom_histogram() + facet_grid(.~cols)
+
+```
+
+
+Lets build a model in the form that will answer the following question: Predict the number of Future thoughts per subject using the descriptive information regarding the big 5 traits + age and gender.
+
+We will start off using the means of the Big 5 per subject, and add a numeric value of the age and a categorical predictor of thr gender. I will attempt to fit  Poisson model and evaluate the following.
+Next I will add and define the offset of the number of observations per Subject into the model.
+Last, I will fit a Stepwise AIC model to perform a proper model selection and filter the remaining contributing columns.
+
+First off we will observe the histogram of the target variable, and a heatmap of the pearson correlations between the averages of the Big 5.
+Bellow are the plots.
+We can see from the heatmap that there is a slightly strong negative correlation between N and the other 4 traits , in particular with A. We would expect the model selection to remove one of these two due this finding.
+
+
+```{r poisson_data_prep, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+# build the testing set
+# y variable (counts of futures)
+sums<- aggregate(big_five[c('Subject','future')], list(Subject = big_five$Subject), FUN=sum)
+
+# number of observations per subject
+lens<- aggregate(big_five[c('Subject','future')], list(Subject = big_five$Subject), FUN=length)
+
+#create the X var
+x <- means[c('Subject','A','C','E','N','O')]
+y <- sums[c('Subject','future')]
+# merge the two together for assignment and alignment
+merged <- merge(x,y,by="Subject")
+
+# create mini df with age and gender to append
+age_and_sex <- big_five[c('Subject','age','sex')]
+age_and_sex <- age_and_sex %>% dplyr::distinct(age_and_sex$Subject , .keep_all = TRUE)
+
+# append to the df the sex and age
+merged <- inner_join(merged,age_and_sex,by="Subject")
+
+# append the num of observations per subject for ffset
+lens <- lens[c('Subject','future')] 
+merged <- merge(merged,lens,by="Subject")
+
+# rename columns
+merged <- merged %>% 
+  rename(
+    future_sum = future.x ,
+    obs_count  =  future.y
+    )
+
+
+# drop observations with null values
+merged <- drop_na(merged)
+#split again to predictors and y
+x <- merged[c('A','C','E','N','O','age','sex')]
+y <- merged$future
+
+# create dataset with all columns
+dd <- merged[c('A','C','E','N','O','age','sex','future_sum','obs_count')]
+
+
+# plot histogram of counts of futures
+p1<-ggplot(merged, aes(x=future)) + geom_histogram() +ggtitle('Histogram of # of True future thoughts ') 
+
+# funtion to get upper triangle of corr matrix
+get_upper_tri <- function(cormat){
+    cormat[lower.tri(cormat)]<- NA
+    return(cormat)
+}
+
+# fun to reorder the matrix
+reorder_cormat <- function(cormat){
+dd <- as.dist((1-cormat)/2)
+hc <- hclust(dd)
+cormat <-cormat[hc$order, hc$order]
+}
+
+# correlation mtrx
+cors <- cor(merged[c('A','C','E','N','O')], method = c( "pearson"))
+upper_tri <- get_upper_tri(cors)
+upper_tri <- round(upper_tri, digits = 2)
+
+melted_cormat <- melt(upper_tri, na.rm = TRUE)
+
+
+# plot heat map of corr matrix
+ggheatmap <- ggplot(melted_cormat, aes(Var2, Var1, fill = value))+
+ geom_tile(color = "white")+
+ scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+    name="Pearson\nCorrelation") +
+  theme_minimal()+ # minimal theme
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()
+
+
+ggheatmap + 
+geom_text(aes(Var2, Var1, label = value), color = "black", size = 4) +
+theme(
+  axis.title.x = element_blank(),
+  axis.title.y = element_blank(),
+  panel.grid.major = element_blank(),
+  panel.border = element_blank(),
+  panel.background = element_blank(),
+  axis.ticks = element_blank(),
+  legend.justification = c(1, 0),
+  legend.position = c(0.6, 0.7),
+  legend.direction = "horizontal")+
+  guides(fill = guide_colorbar(barwidth = 7, barheight = 1,
+                title.position = "top", title.hjust = 0.5))
+
+```
+
+
+From the results Below we can see that the model selection has dropped the Gender and N predictors , and has resulted in a pretty significant prediction model.
+
+Its interesting to see that the Z value for the age is negative , and significant reflecting on a negative relation to the predictor (lower the age , the more people think of the future). 
+
+Another interesting finiding is the relation between "O" and the target , where O represents Openness to experiences.We find that the test's results indicates that the higher the grade the observant gives itself to this predictor (O) , the more they think of the future. One of the more interesting facts that this trait includes is active imagination , which we can derive a strong connection to future thinking.
+
+On the other hand , a negative relationship we see is with predictor "C" , being Conscientiousness. Under this definition , we see this as a trait of carefulness and deliberation. This is surprising, since we would expect that people that are careful and think carefully before they act would have a high relationship with the number of times they thought of the future.
+
+Lets also view the predicted vs actual values to esitmate how well this is fitting. We can see that the scaling here is off , in terms of the predicted being a bit higher in general than the actual.
+
+
+```{r poisson, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# print out the summary of the piosson regression with a log offest of the counts per observation
+m0 <- glm(future_sum ~ A+C+E+N + O+ age+sex + offset(obs_count),poisson, dd)
+# Stepwise Poisson model - both ways
+step.model <- stepAIC(m0, direction = "both", 
+                      trace = FALSE)
+pander(summary(step.model))
+
+predicted_vals <- predict(step.model,dd,type = "response")
+plot(dd$future_sum,predicted_vals)
+abline(a=dd$future_sum, b=predicted_vals, col="red")
+
+
+par(mfrow=c(2,2))
+plot(step.model)
+
+```
+
+
+I decided to look at the selected model and compare to the default one, using an Anova to test the deviance of the two models. We can see a Chi Squared that is high, which means that we will not reject the null hypothesis , and most likely treat these two models with the same deviance.
+
+```{r poisson_anova_aic, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# anova stepwise model vs classic poisson
+pander(anova(m0, step.model, test="Chisq"), caption="Anova offset W/O Step AIC")
+```
+
+
+```{r poisson_anova_aic_@, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+#dd$p <- predict(m0,dd, type="response")
+#dd$step <- predict(step.model,dd, type="response")
+
+#plot(dd$future_sum , dd$p)
+#plot(dd$future_sum, dd$step)
+```
+
+Next we will check out the model of the quasi poisson. As we can see , there can be an assumption that there is overdipersion in the data. I also performed an overdispersion test to verify whether the posson model fits well. We can see that the despersion ratio is not close to 1,  and since its larger than one , it probably indicates an over dispersion. We also can identify this by the very low P value.
+Also ,below is the histogram where we can visually identify the overdisperssion skewing towards the left.
+
+Therefor we will attemt a quasipoisson model and compare the results.First off ,we can see that there is no significant T value , which in itself is interesting. Though we see that the residual deviance is lower in the current model moving from 7104 to 6991 from the null. On the other hand, it doesnt move from the original selected model! (anova test below)
+
+
+
+```{r Quasipossion, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# histogram of num of obs per day
+ggplot(dd, aes(x=future_sum)) + geom_histogram() +ggtitle('Histogram of # Obs per Day') 
+# run overdisperssion test
+pander(check_overdispersion(m0))
+
+# run quasipoisson
+m2 <- glm(future_sum ~ A+C+E + O+ age + offset(obs_count),quasipoisson, dd)
+pander(summary(m2))
+
+# use anova test to compare stepwise model to quasi
+pander(anova(m2,step.model))
+
+```
+
+In the following plot we demonstrate the indifference between the quasi poisson and poisson in terms of deviance , but it seems like the quasi posson model predicts a bit worse. Below we can compare the predictions. Both models considerabley have a low 
+
+```{r Quasipossion_plot, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# plot predictions
+predicted_vals <- predict(m2,dd,type = "response")
+p1<-plot(dd$future_sum,predicted_vals, main="Quasipoisson")
+p1<-p1+ abline(a=dd$future_sum, b=predicted_vals, col="red")
+
+
+predicted_vals <- predict(step.model,dd,type = "response")
+p2<-plot(dd$future_sum,predicted_vals, main="Poisson - selected model")
+p2<-p2+abline(a=dd$future_sum, b=predicted_vals, col="red")
+
+#grid.arrange(p1, p2,ncol = 2, nrow = 1)
+
+```
+
+
+# Summary - Q2
+
+To sum up this research , we attempted to predict the number of times a patient has future thoughts, using the Big 5 traits plus some demographic information. 
+I tried to use the poisson and Quasipoisson , and the results have room for improvement with additional touches. We can assume that there might be a different fit that may help.
+
+
+# Future Thoughts 
+
+We saw here an attempt to fit a poisson model on the given predictors. A couple thoughts for the future would be to possibly engineer the predictors and refine them. The current predictors were the avergaes based on a small set per subject, where the variance might be high per subject and this may have affected the predicitivnes and fittness. With more data per subject this might have been improved.
+
+Another thought would be to add the STD per predictor in the model as well , and use both the mean and STD to predict. this would possibly enrich the dataset wihout harming the dimensionality too much.
+
+We can attempt to fit a different type of model that may give us better results ( such as a negative binomeal , exponential etc...) - in the code attached I attempted the NB and saw that there was no improvement (possibly due to the number of zeros )
+
+
+
+
+
+```{r nb, echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+#par(mfrow = c(2, 1))
+
+#teting negative bnomial
+#m3 <- glm.nb(future_sum ~ A+C+E + O+ age, data=dd)
+#pander(summary(m3))
+
+#predicted_vals <- predict(m2,dd,type = "response")
+#plot(dd$future_sum,predicted_vals)
+#p1<-p1+ abline(a=dd$future_sum, b=predicted_vals, col="red")
+
+#predicted_vals <- predict(m3,dd,type = "response")
+#plot(dd$future_sum,predicted_vals)
+#p2<-p2+abline(a=dd$future_sum, b=predicted_vals, col="red")
+#grid.arrange(p1, p2,ncol = 2, nrow = 1)
+
+```

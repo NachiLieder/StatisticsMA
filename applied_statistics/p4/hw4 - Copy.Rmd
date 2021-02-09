@@ -1,0 +1,640 @@
+
+---
+output:
+  pdf_document:
+    toc: no
+pagetitle: HW4
+title: "HW4 - Nachi Lieder 314399114"
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# import libraries
+library(rmarkdown)
+library(plyr)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(pivottabler)
+library(gtsummary)
+library(ggpubr)
+library(ggfortify)
+library(cluster)
+library(MASS)
+library(lmtest)
+library(fBasics)
+library(rcompanion)
+library(gridExtra)
+library(cowplot)
+library(kableExtra)
+library(haven)
+library(tidyverse)
+library(rstatix)
+library(ggpubr)
+library(lme4)
+library(reshape2)
+library(kableExtra)
+library(pander)
+library(performance)
+library(pROC)
+library(sqldf)
+library(nlme)
+library(ggeffects)
+library(doBy)
+library(tseries)
+library(forecast)
+
+
+```
+
+# Introduction
+
+In this report we will analyze the case distribution of the covid cases across the world. We will assess France's time series of covid cases.
+
+```{r , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# data <- read.csv("https://opendata.ecdc.europa.eu/covid19/casedistribution/csv", na.strings = # "", fileEncoding = "UTF-8-BOM")
+
+#setwd("School/courses/applied_stats/p4")
+#write.csv( data, 'data.csv')
+data <- read.csv('download')
+```
+
+# Part 1
+Lets look at the time series of France covid cases. Looking at the straight up number of weekly cases we can see the time series spiking around October-November of 2020 , and another small spike during April 2020.
+
+Generally speaking , it is a difficult task to fit a model with an abnormality such as the one we see in this projection.
+We will attempt in any case to fit a forcasting model.
+
+
+To create an autoregressive model we need to verify whether the given series is stationary. Foor this I ran a Dickey Fuller test to define how strongly the series is defined by a trend. We recieve a series with a pvalue of 0.3 meaning that we reject the null hypothesis and that the data has a unit root and is non-stationary.
+
+from the initial view of the plot we dont exactly see any seasonality. 
+
+```{r initial_plot , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+#convert dates columns
+# plot the weekly cases in france
+data$dateRep<-as.Date(data$dateRep, '%d/%m/%Y')
+france <-  data[ data$countriesAndTerritories=='France' ,]
+p <- ggplot(france, aes(x=dateRep, y=cases_weekly)) +
+  geom_line() + 
+  xlab("")+ ggtitle("Plot of weekly cases in France")
+grid.arrange(p)
+
+par(mfrow=c(1,1))
+# dickey fuller test
+options(warn=-1)
+pander(adf.test(france$cases_weekly), caption = "Dickey Fuller Test")
+
+```
+
+Lets look at the Auto Correlation and Partial Auto Correlation plots to understand what potential lags we would like to include in our ARIMA model.
+From the following plots , we can see that the ACF would consider including lags of up to  7 weeks (potentially because each observation is still influencing the previous one). Though when running the auto correlation plot, we can see that after the 3rd week , we can see insignificance in terms of contribution and corellation. We can also derive that indeed there is a correlation between following observations which causes the PACF to have weaker signals and correaltions.
+From the PACF we will decide to reduce our lags from 7 to 3. We will attempt to fit the model of ARIMA(3,1,0).
+
+```{r exlplore_data , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+par(mfrow=c(1,2))
+# dickey fuller test
+options(warn=-1)
+#pander(adf.test(france$cases_weekly), caption = "Dickey Fuller Test")
+
+#par(mfrow=c(1,2))
+p1<- acf(france$cases_weekly, plot=FALSE)
+plot(p1,main = "ACF")
+
+p2<- pacf(france$cases_weekly, plot=FALSE)
+plot(p2,main = "PACF")
+
+# box cox transofrmation
+tseries_h<- france$cases_weekly
+#bx<- BoxCox(tseries_h, lambda = 0.5)
+#plot.ts(bx)
+#lambda <- BoxCox.lambda(tseries_h)
+#adf.test(bx)
+
+```
+
+Lets try and explore the Auto ARIMA to understand the behaviour and optimized parameters according to the corrected AIC.
+We will explore two methods here , one using stepwise methodology and the other not.
+Interestingly enough the results are quite different.
+Lets compare the results:
+
+## Approach 1: Using Stepwise 
+
+In this approach , we can see that the optimized paramters for our ARIMA give us a model of (0,1,0) which is nothing but the differences. In addition we can see an AIC of  1236.25.
+Lets observe the plot of the differences of our time series, In the plot below we can see the scatter of the differences, having most of them aaround 0 , excluding the abnormal spike we observed in the former part of the exploration. 
+While looking at the ACF and PACF , with the PACF we can see that indeed there is no auto correlation that has a strong enough coefficient. (having the 1 day lag with with a strong signal for ACF , though we will ignore this due to the weak PACF signal.)
+
+This could be an acceptable model, though we will explore the second option as well for reference and decide from the two.
+
+```{r auto_arima1 , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+#Aproach 1
+par(mfrow=c(1,1))
+options(warn = -1)
+f<- auto.arima(tseries_h)
+plot(forecast(f,h=20))
+#pander(summary(f) , caption ='Summary Stepwise ARIMA')
+#pander(f$coef , caption ='Coefficients non Stepwise ARIMA')
+#pander(f$aic , caption ='AIC non Stepwise ARIMA')
+#pandoc.table(f$aic, keep.line.breaks = FALSE,caption ='AIC Stepwise ARIMA',style = 'rmarkdown')
+
+
+par(mfrow=c(1,3))
+# lewts check auto coreelation since we are looking at the diff (0,1,0)
+plot(diff(tseries_h),main = "Scatter Differences")
+p1<- acf(diff(tseries_h),plot = FALSE)
+plot(p1,main = "ACF")
+p2<- pacf(diff(tseries_h),plot = FALSE)
+plot(p2,main = "PACF")
+```
+
+Lets observe the second approach:
+
+## Approach 2: Not Stepwise
+
+Here we can see that the optinal model is quite different. The model we receive is and ARIMA of (0,1,2). Looking at the AIC we see 1231 which is already in improvement.
+In addition , lets look at the ma_1 and ma_2 coefficients, and we can see that the first coeffieicnet is 0.14 and the second 0.51.
+
+While observing the residuals of our ARIMA model , we can a normal behavior , and whileobserving our ACF we see no auto correlation effect.
+
+```{r auto_arima2 , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+#Aproach 2
+options(warn = -1)
+f<- auto.arima(tseries_h, stepwise = FALSE,seasonal=FALSE)
+pander(f$coef , caption ='Coefficients non Stepwise ARIMA')
+#pandoc.table(f$aic, keep.line.breaks = FALSE,caption ='AIC non Stepwise ARIMA',style = #'rmarkdown')
+
+
+
+#pander(f$aic , caption ='AIC non Stepwise ARIMA')
+# lewts check auto coreelation since we are looking at the diff (0,1,0)
+#resid<- checkresiduals(f, plot=FALSE,test=FALSE)
+#par(mfrow=c(1,1))
+#plot(forecast(f,h=20))
+
+#checkresiduals(f,test = FALSE)
+```
+
+## Conclusion 
+
+To conclude this part of the analysis, we will agree to advance and utilize the ARIMA model in the form of (0,1,2). This is based on our improved model defined by the AIC reduction. 
+ 
+
+
+# Part 2 
+
+Here we will attempt to fit a spline smoother to the data of the french time series.
+
+```{r function , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+# define plotting function
+plot_predictions <- function(france, m , title){
+  pred <- data.frame(week = france$week,
+                         cases_weekly = france$cases_weekly,
+                         predicted_values = predict(m, newdata = france))
+  
+ ggplot(pred, aes(x = week)) +
+  geom_point(aes(y = cases_weekly), size = 1, alpha = 0.5) + geom_line(aes(y = predicted_values), colour = "red")+ ggtitle(title)
+}
+
+```
+
+
+Lets look at first at the basis functions . We will test several types of basis functions. We will asses 3 different functions and base our fit by viewing the plots fit.
+
+Below we can see the three plots, we can see that the model of cases_weekly ~ ti(week) has a fairly weak fit and the smooth is too strong. The model of cases_weekly ~ s(week) gives us a much beter fit.
+
+Also , when combining the basis functions together we can see a strong smooth terms for the thin plate spline. 
+
+```{r gam , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+
+
+library(mgcv)
+library(stringr)
+# split the column to use the week as an input
+france$week <- str_split_fixed(france$year_week,'-',2)[,2]
+france$week <- as.numeric(france$week)
+
+
+p1 <- ggplot(france, aes(week, cases_weekly)) + geom_point()
+p1
+
+```
+
+Lets first look at the model of $cases-weekly \sim  s(week)$
+First off the histogram of residuals presents a gausian behavior , though the residuals vs linear predictions is not exactly as we hoped. as the predictor increases we see a diviance in the residuals. This will be considered a benchmark towards the other models that will be evaluated below.
+
+In addition , we can see a fairly nice fit with a slight generalization towards the outlier peak during weeks 40-50.
+
+```{r s_week , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+###########################################################
+# s(week)
+m1 <- gam(cases_weekly ~ s(week), data = france , method = "REML")
+# plot diagnostics
+par(mfrow = c(2,2))
+gam.check(m1)
+
+#the larger the number, the more wiggly the fitted model.
+summary(m1)
+
+#model of s(week)
+#p1<- ggplot(france, aes(week, cases_weekly)) + geom_point() + geom_smooth(method = "gam", formula = y ~s(x))
+
+p1 <- plot_predictions(france,m1,"cases_weekly ~ s(week)")
+grid.arrange(p1)
+```
+
+Lets evaluate the following model formats and comapre the results.
+
+- Case b: cases_weekly ~ ti(week)
+- Case c: cases_weekly ~ ti(week) +s(week)
+- Case d: cases_weekly ~ te(week)
+
+
+Under case B we see strong results coming frm a very low p value, significantly high F stat and a high R squared adj. of 0.62. 
+When looking at the plot of predictions we can see that the fit doesnt seem as stong and well fit as the Case A , and is much more smooth.
+
+With Case C we can see even stronger results , in particular with the R squared. improving from 0.62 to 0.78. The fit is a lot less smooth and well fit. This is a strong candidate for the selected model.
+
+Model D is similar to model B giving similar results.
+
+```{r ti_week , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+###########################################################
+# ti(week) 
+
+m2 <- gam(cases_weekly ~ ti(week), data = france)
+# plot diagnostics
+par(mfrow = c(2,2))
+gam.check(m2)
+
+#the larger the number, the more wiggly the fitted model.
+#summary(m2)
+
+#model of s(week)
+#ggplot(france, aes(week, cases_weekly)) + geom_point() + geom_smooth(method = "gam", formula = #y ~ti(x))
+#grid.arrange(p1)
+p2<- plot_predictions(france,m2,"cases_weekly ~ ti(week)")
+
+
+
+###########################################################
+# ti(week) +s(week)
+
+m3 <- gam(cases_weekly ~ ti(week) +s(week), data = france)
+# plot diagnostics
+par(mfrow = c(2,2))
+gam.check(m3)
+
+#the larger the number, the more wiggly the fitted model.
+#summary(m3)
+
+#model of s(week)
+#p2<- ggplot(france, aes(week, cases_weekly)) + geom_point() + geom_smooth(method = "gam", #formula = y ~ti(x) + s(x))
+#grid.arrange(p2)
+
+p3<- plot_predictions(france,m3,"cases_weekly ~ ti(week) +s(week)")
+
+
+###########################################################
+m11 <- gam(cases_weekly ~ te(week), data = france)
+
+#the larger the number, the more wiggly the fitted model.
+#summary(m11)
+
+#model of te(week)
+#ggplot(france, aes(week, cases_weekly)) + geom_point() + geom_smooth(method = "gam", formula = y ~te(x))
+
+p11<- plot_predictions(france,m11,"cases_weekly ~ te(week) ")
+###########################################################
+
+
+grid.arrange(p2,p3,p11)
+
+```
+
+
+Lets review models with the change of the basis function. We will change the amount of knots and assess the plots.
+
+Lets asses the change in the parameter of the amount of knots ranging (52,1,10,20).
+
+- Model E: Model with 52 knots
+- Model F: Model with 1 knots
+- Model G: Model with 10 knots
+- Model H: Model with 20 knots
+
+Looking at the fit for 52 knots we can see a very good fit, though this may be understandable since the entire cycle of our data is 52 weeks. We will keep this in mind when fully evaluating all the models together.
+
+As expected the single knot gives the smoothest plot which is somewhat irrelevant to our analysis.
+What is interesting is that 20 and 52 knots give similar plots. Eventually we will dive into this to understand why this may occur.
+
+```{r k , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# change the number of basis functions
+
+m4 <- gam(cases_weekly ~ s(week, bs = 'cc', k = 52), data = france , method = "REML")
+m5 <- gam(cases_weekly ~ s(week, bs = 'cc', k = 1), data = france , method = "REML")
+m6 <- gam(cases_weekly ~ s(week, bs = 'cc', k = 10), data = france , method = "REML")
+m7 <- gam(cases_weekly ~ s(week, bs = 'cc', k = 20), data = france , method = "REML")
+
+
+
+#model of s(week)
+#ggplot(france, aes(week, cases_weekly)) + geom_point() + geom_smooth(method = "gam", formula = y ~s(x, bs = 'cc', k = 52))
+
+
+p4<- plot_predictions(france,m4,"Cyclic ~ 52 knots")
+p5<-plot_predictions(france,m5,"Cyclic ~ 1 knot")
+p6<-plot_predictions(france,m6,"Cyclic ~ 10 knots")
+p7<-plot_predictions(france,m7,"Cyclic ~ 20 knots")
+
+grid.arrange(p4,p5,p6,p7)
+
+```
+
+Now lets observe the changes in the smotthing parameter.
+We will be adjusting our gamma parameter to the following models:
+
+- Model I: Gamma = 1
+- Model J: Gamma = 20
+- Model K: Gamma = 0.1
+
+Here when viewing the plot , we dont see any model which may be a solid contender to our model selection.
+
+```{r gamma , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+###########################################################
+# change the smoothing parameter - gamma
+
+
+m8 <- gam(cases_weekly ~ s(week), gamma=1 ,data = france , method = "REML")
+p8 <-plot_predictions(france,m8, 'gamma = 1')
+
+m9 <- gam(cases_weekly ~ s(week), gamma=20 ,data = france , method = "REML")
+p9 <-plot_predictions(france,m9, 'gamma = 20')
+
+m10 <- gam(cases_weekly ~ s(week), gamma=0.1 ,data = france , method = "REML")
+p10 <- plot_predictions(france,m10, 'gamma = 0.1')
+
+
+grid.arrange(p8,p9,p10)
+```
+
+
+Lets present the model comparison in terms of AIC. We can see that model  which is the model of 20 knots with a cyclic smoother   presents the best fit with the lowest AIC of 1253. 
+
+
+
+```{r anova , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+m1_an <- gamm(cases_weekly ~ ti(week), data = france)
+m2_an <- gamm(cases_weekly ~ s(week), data = france)
+m3_an <- gamm(cases_weekly ~ s(week) + ti(week), data = france)
+m4_an <- gamm(cases_weekly ~ s(week, bs = 'cc', k = 52), data = france , method = "REML")
+m5_an <- gamm(cases_weekly ~ s(week, bs = 'cc', k = 1), data = france , method = "REML")
+m6_an <- gamm(cases_weekly ~ s(week, bs = 'cc', k = 10), data = france , method = "REML")
+m7_an <- gamm(cases_weekly ~ s(week, bs = 'cc', k = 20), data = france , method = "REML")
+m8_an <- gamm(cases_weekly ~ s(week), gamma=1 ,data = france , method = "REML")
+m9_an <- gamm(cases_weekly ~ s(week), gamma=20 ,data = france , method = "REML")
+m10_an <- gamm(cases_weekly ~ s(week), gamma=0.1 ,data = france , method = "REML")
+m11_an <- gamm(cases_weekly ~ te(week) ,data = france , method = "REML")
+
+anova(m1_an$lme,
+      m2_an$lme,
+      m3_an$lme)
+
+anova(m4_an$lme,
+      m5_an$lme,
+      m6_an$lme,
+      m7_an$lme)
+
+anova(m7_an$lme,
+      m8_an$lme,
+      m9_an$lme)
+```
+
+Now let us compare the prior results vs the models based on BAM models.
+The following analysis reviews the models with different values oh $\rho$ evaulating the AIC.
+What may interest us from the plot below is looking at the $\rho$ with the values 0.5 and 0.7 since there we can see a significant change in the relation between $\rho$ and REML.
+
+When reviewing the plot, it seems like the optimal fit from the GAM model is a better fit.Though on the other hand , we know that for these values of $\rho$ we get a much more improved model in terms of AIC.
+
+Generally speaking I would reccomend to further investigate both the optimal from the GAM and model with $\rho$ = 0.7 as primary candidates for our model selection.
+
+```{r bam , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+# check where the drop of the rho is
+#once we hit a high rho , we see that the trend is random  - and they are due to auto correlated errors
+
+aicvec<-remlvec<-c()
+rovec<- seq(.01,1,0.05)
+for (k in 1:length(rovec)){
+  tmp<- bam( cases_weekly ~ s(week) , rho = rovec[k],data = france)
+  aicvec[k] <- AIC(tmp)
+  remlvec[k] <- tmp$gcv.ubre
+  #cat(rovec[k], aicvec[k], remlvec[k],"\n")
+  
+  
+}
+
+#matplot(rovec, cbind(aicvec,remlvec))
+q1<- qplot(rovec, aicvec)+ ggtitle('Rho value vs AIC ')
+q2<- qplot(rovec, remlvec)+ ggtitle('Rho values vs REML' )
+
+# check certain rhos
+
+m13 <- bam(cases_weekly ~ s(week) , rho =0.7,data = france)
+p13 <- plot_predictions(france,m13, 'BAM with rho 0.7')
+
+m14 <- bam(cases_weekly ~ s(week) , rho =0.5,data = france)
+p14 <- plot_predictions(france,m14, 'BAM with rho 0.5')
+grid.arrange(q1,q2)
+grid.arrange(p13,p14)
+
+```
+
+# Part 3 - Varying coefficient model
+
+Lets look at the information regarding continents , and observe models that review weekly cases per continent in a scaled form of per capita 1:100,000.
+The tests we will look at will involve Asia and Europe.
+
+We will approach this in two ways:
+
+### Approach:
+
+We will treat each continent as a union of all cases. This means that we will sum per week all the weekly cases and adjust by the sum of all the population. Or in other words:
+
+$\frac{\Sigma_{countries-in-continent}weekly-cases}{\Sigma_{countries-in-continent}Population}$
+
+From here we will have two sets of groups, one for Asia and one for Europe. Once we have there two sets, we will have 2 constructed time series of weekly observation and their adjusted cases per 100K observants.
+
+First lets addres the general behavior of the time series. We can see below that within year 2020 , until week 30 both continents held an average of below 25 cases per capita ,and from there the drastic growth within Europe took an increase , while in Asia it stayed steady.
+A thought on this would be to examine the methods of containment within the two continents and break down by country to understand which contries are responsible for maintaining this ratio.
+
+
+
+```{r vc , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+data$cases_per_capita <- data$cases_weekly / data$popData2019 * 100000
+
+data$week <- str_split_fixed(data$year_week,'-',2)[,2]
+data$week <- as.numeric(data$week)
+
+
+# crete set of data aggregated by continent and sum weekly cases and population (per week)
+agg_data <- data %>% 
+  group_by(continentExp,week) %>% 
+  summarise(cases_weekly = sum(cases_weekly),
+            popData2019 = sum(popData2019))
+
+agg_data$cases_per_capita <- agg_data$cases_weekly / agg_data$popData2019 * 100000
+
+agg_data <- agg_data[(agg_data$continentExp == 'Asia')|((agg_data$continentExp == 'Europe')),]
+
+
+agg_data$cont <- factor(agg_data$continentExp)
+agg_data<- na.omit(agg_data)
+
+cases_per_capita<- as.vector(agg_data$cases_per_capita)
+dateRep <- agg_data$dateRep
+cont <- agg_data$cont
+
+cont_plot <- ggplot(agg_data, aes(x = week, y = cases_per_capita, colour = factor(cont)))+ 
+  geom_point(size=2.5)+ ggtitle('Plot of Avg Adjusted cases per 100K weekly')
+cont_plot$labels$colour <- "Continent"
+grid.arrange(cont_plot)
+```
+
+Per this approach , lets try to create a coefficient varying model differed by the two groups.
+We will examine several models and create a model selection based on several criterias.
+
+- Looking at the model 4 we get a very high R squared of 97%. In addition we can observe a high t value fr our intercept regarding the continent indicator with T =28.The REML is 394, lowest among all the model that were checked (see appendix).
+
+Running a quick anova test we can see that our selected model produces the lowest residuals deviance with the value 8150.
+
+
+```{r vc_gam , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+m3_1 <- gam(cases_per_capita ~ s(week)+ s(week,by=cont,bs="cc"), data = agg_data , method = "REML")
+m3_2 <- gam(cases_per_capita ~ s(week)+ te(week,by=cont), data = agg_data , method = "REML")
+m3_3 <- gam(cases_per_capita ~ s(week)+ s(week,by=cont,bs="cc")+ te(week,by=cont), data = agg_data , method = "REML")
+summary(m3_4 <- gam(cases_per_capita ~ cont + s(week)+ s(week,by=cont,bs="cc")+ te(week,by=cont), data = agg_data ,
+method = "REML"))
+
+par(mfrow=c(3,3))
+plot(m3_4)
+
+pander(anova(m3_1,m3_2,m3_3,m3_4),caption = 'Anova 4 models')
+
+
+```
+
+### Extra Characterisitcs:
+
+Now lets preform the T Test to compare means of both groups. Since the data is stationary (below - dickey fuller test indicating stationary), we will convert this by dealing ewith the weekly lag differences , and compare these two paired sets of values. our null hypothesis would be the the groups have the same means and we will execute a two sided T test to validate the significance of the test.
+From the time series plot show above, the first hint ould be that there is a different mean , but we will conclude this below.
+
+From the results below we see a p value that is of value 0.07 , this is pretty high and in our case we can conclude a characteristic that the mean of the lag differences is different between the two groups.
+This is not suprising since we can see that the general behavior of each continent is different and there is a peak in Europe which is not seen in Asia.
+
+```{r tstat , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+
+##### -------- aggregating all countries in same continent a- sum all weekly cases and adjust
+asia <-  agg_data[(agg_data$continentExp == 'Asia'),]$cases_per_capita
+europe <-  agg_data[(agg_data$continentExp == 'Europe'),]$cases_per_capita
+
+pander(adf.test(europe), caption = "Dickey Fuller Test - Europe Lag Differences")
+pander(adf.test(asia), caption = "Dickey Fuller Test- Asia Lag Differences")
+
+# low p val -> not equal
+pander(t.test(diff(asia,1), y = diff(europe,1), alternative = c("two.sided"), paired = FALSE, var.equal = FALSE, conf.level = 0.95))
+
+```
+
+# Part 4
+
+In this part we will try to characterize and cluster the different time series by country. The gaol is to try to identify if there are meaningful clusters and their underlying meaning.
+For this I decided to use the approach from class where I used a K Mediods model to cluster the countries.
+Since my time series were only 52 weeks long, and somecountries even have less, I decided to hold a small amount of clusters .
+First off we can view the plot of the dimension reduction using the first two principal components. Here there seems to be  one large cluster and the rest of the observations are somewhat spread out. We will see how the model treats these other observations , with the expectation that the cluster we are able to see will probably stay the same.
+
+Next we will perform the K meadiods on 3,4,5 clusters , and I found that the model doesnt seem to find enough observations to assign to the last clusters (4 and 5), and therefor I decided to stay with 3.
+
+What we can see is quite interesting. First off , the vast majority of the countries are 170,34,9 . I would interpret this as most of the countries dealing with the Covid 19 the same way , having the same behavior of the weekly cases.
+Looking at some of the other clusters, Cluster 2 seems mostly dominated by european countries, and cluster 3 looks like the set of countries which seemed to have drastic issues with the covid.(Example: Italy, UK , USA, Russia, France...)
+We can split this into 3 characters, having the low key, mid key and severe cases of covid aligned with the timing. These countries might have dealt with covid the same way during the same time. Cluster 2 might be characterized as the european culture. We can imagine that europe would more or less deal with the covid the same way having a collaborative approach.
+
+You can see in the appendix the cluster spread and assigning per country as well.
+In addition the distribution of the continents accross the clusters.
+
+```{r ts_clustering , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+cols <- c('countriesAndTerritories','week','cases_weekly')
+pv <- data[cols]
+library(reshape2)
+
+#pv <- pv[pv$week > 10 , ]
+rr <- recast(pv, countriesAndTerritories  ~ week, id.var = c( "week",'countriesAndTerritories'))
+rr[is.na(rr)] <- 0
+
+require(dtw)
+jj <- dist(rr[,-1], method="dtw")
+mds <- cmdscale(jj, eig=TRUE)
+plot(mds$points[,1:2], pch=16, cex=.8, xlab="Principal coordinate 1", ylab="Principal coordinate 2")
+
+require(cluster)
+p3 <- pam(jj,3)      # k-medoids clustering
+t_table <- table(p3$clust,rr[,1])
+
+#merge with continent and compare
+tr_table <- t(t_table)
+
+plot(mds$points[,1:2], pch=16, cex=.8, xlab="Principal coordinate 1", ylab="Principal coordinate 2",col=p3$cluster)
+
+
+continents_and_countries <- as.data.frame(unique(data[c('countriesAndTerritories','continentExp')]))
+rownames(continents_and_countries) <- continents_and_countries$countriesAndTerritories
+
+df_tr_table <- as.data.frame.matrix(tr_table)
+df_tr_table$countriesAndTerritories <- rownames(df_tr_table)
+
+m<- merge(x = df_tr_table,y = continents_and_countries, by.x='countriesAndTerritories', by.y='countriesAndTerritories', all.x=FALSE, all.y=FALSE)
+
+```
+
+
+# Appendix: 
+The following prints are of the summary results from the models discussed above.
+
+```{r summaries , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+summary(m2)
+summary(m3)
+summary(m11)
+```
+
+The following summaries are of the models from part 3 with the time varying coefficient models
+```{r p3_summaries , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+summary(m3_1)
+summary(m3_2)
+summary(m3_3)
+
+```
+
+Below we can see the distribution and assignment of the clusters per country and contient.
+
+```{r cluster , echo=FALSE , echo=FALSE, warning=FALSE,message=FALSE}
+# all cluster 1 
+tr_table[tr_table[,1] ==1,]
+# all cluster 2
+tr_table[tr_table[,2] ==1,]
+# all cluster 3 
+tr_table[tr_table[,3] ==1,]
+
+m %>% 
+  group_by(continentExp) %>% 
+  summarise(across(c(2,3,4), list(mean)))
+
+```
